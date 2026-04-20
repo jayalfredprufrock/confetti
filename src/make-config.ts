@@ -1,86 +1,66 @@
 import { CONFETTI } from "./symbols";
-import type { Confetti, Config, ConfigFlatMapContext, Obj, ResolvedConfig } from "./types";
-import { configFlatMap, setAtPath } from "./util";
+import type {
+  Confetti,
+  Config,
+  ConfigEntry,
+  Fetcher,
+  Paths,
+  SubtreePaths,
+  ValidateConfig,
+  ValueAtPath,
+} from "./types";
+import {
+  buildEntry,
+  entriesIter,
+  getAtPath,
+  isNestedConfig,
+  resolveEntryAsync,
+  resolveEntrySync,
+  resolveSubtreeAsync,
+  resolveSubtreeSync,
+} from "./util";
 
-export const makeConfig = <C extends Config>(makeConfig: (env: string) => C): Confetti<C> => {
+export const makeConfig = <const C extends Config>(
+  input: (C & ValidateConfig<C>) | ((env: string) => C & ValidateConfig<C>),
+): Confetti<C> => {
+  const factory = typeof input === "function" ? input : () => input;
+
   const confetti = (env: string) => {
-    const config = makeConfig(env);
+    const config = factory(env);
 
-    const flatMap = <T>(transform: (context: ConfigFlatMapContext) => T | T[]) =>
-      configFlatMap<T>(env, config, transform);
+    const get = <P extends Paths<C> & string>(path: P): ValueAtPath<C, P> => {
+      const node = getAtPath(config, path);
+      const resolved = isNestedConfig(node)
+        ? resolveSubtreeSync(node, path, env)
+        : resolveEntrySync(buildEntry(node, path, env), env);
+      return resolved as ValueAtPath<C, P>;
+    };
 
-    const contextByPath = Object.fromEntries(flatMap((context) => [[context.path, context]]));
+    const resolve = async <P extends Paths<C> & string>(
+      path: P,
+      fetcher: Fetcher,
+    ): Promise<ValueAtPath<C, P>> => {
+      const node = getAtPath(config, path);
+      const resolved = isNestedConfig(node)
+        ? await resolveSubtreeAsync(node, path, env, fetcher)
+        : await resolveEntryAsync(buildEntry(node, path, env), env, fetcher);
+      return resolved as ValueAtPath<C, P>;
+    };
 
-    const resolveValue = async (path: string): Promise<any> => {
-      const context = contextByPath[path];
-      if (!context) throw new Error(`Invalid config path '${path}'.`);
-      const { unresolvedValue } = context;
-      const value =
-        typeof unresolvedValue === "function" ? await unresolvedValue(context) : unresolvedValue;
-      if (value === undefined) {
-        throw new Error(`Config value at '${path}' resolved to undefined.`);
+    const entries = (
+      startPath?: SubtreePaths<C> & string,
+    ): IterableIterator<[string, ConfigEntry]> => {
+      const root = startPath ? getAtPath(config, startPath) : config;
+      if (!isNestedConfig(root)) {
+        throw new Error(`'${startPath}' is not a config subtree.`);
       }
-      return value;
+      return entriesIter(root, env, startPath ? `${startPath}.` : "");
     };
 
-    const resolveValueSync = (path: string): any => {
-      const context = contextByPath[path];
-      if (!context) throw new Error(`Invalid config path '${path}'.`);
-      const { unresolvedValue } = context;
-      if (typeof unresolvedValue === "function") {
-        throw new Error(`Cannot resolve config value at "${path}" synchronously.`);
-      }
-      return unresolvedValue;
-    };
-
-    const resolve = async (): Promise<any> => {
-      const resolvedConfig: Obj = {};
-      const promises = Object.keys(contextByPath).map(async (path) => {
-        return resolveValue(path).then((resolvedValue) =>
-          setAtPath(resolvedConfig, path, resolvedValue),
-        );
-      });
-
-      await Promise.all(promises);
-
-      return resolvedConfig;
-    };
-
-    const resolveSync = (): any => {
-      const resolvedConfig: Obj = {};
-      for (const path of Object.keys(contextByPath)) {
-        setAtPath(resolvedConfig, path, resolveValueSync(path));
-      }
-      return resolvedConfig as ResolvedConfig<C>;
-    };
-
-    const resolveEnv = async (): Promise<any> => {
-      const envVars: Obj<string> = {};
-      const promises = Object.values(contextByPath).flatMap(async (context) => {
-        const { envVar } = context;
-        if (!envVar) return [];
-        return resolveValue(context.path).then((resolvedValue) => {
-          envVars[envVar] = JSON.stringify(resolvedValue);
-        });
-      });
-
-      await Promise.all(promises);
-
-      return envVars;
-    };
-
-    return {
-      config,
-      flatMap,
-      resolveValue,
-      resolveValueSync,
-      resolve,
-      resolveSync,
-      resolveEnv,
-    };
+    return { config, get, resolve, entries };
   };
 
   confetti[CONFETTI] = "CONFETTI" as const;
 
-  return confetti;
+  return confetti as Confetti<C>;
 };

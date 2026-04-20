@@ -1,81 +1,165 @@
-import { CONFETTI, DATA, DEFAULT, ENV_VAR } from "./symbols";
+import { CONFETTI, DATA, DEFAULT, ENV, TYPE } from "./symbols";
 
 export type Obj<T = unknown> = Record<string, T>;
 
 export type Primitive = string | number | boolean | null;
 export type MaybeArray<T> = T | T[];
 
-export type ConfigVal =
-  | MaybeArray<Primitive>
-  | ((context: ConfigFlatMapContext) => any)
-  | (() => Promise<any>);
+export type ConfigValFn<T = unknown> = (env: string) => T;
+export type ConfigVal = MaybeArray<Primitive> | ConfigValFn<any>;
+
+export type TypeTag = "string" | "number" | "boolean" | "string[]" | "number[]" | "boolean[]";
+
+export type TypeMap = {
+  string: string;
+  number: number;
+  boolean: boolean;
+  "string[]": string[];
+  "number[]": number[];
+  "boolean[]": boolean[];
+};
 
 export type IsConfigValPerEnv<T> = T extends
   | { [DEFAULT]: any }
-  | { [ENV_VAR]: any }
+  | { [ENV]: any }
   | { [DATA]: any }
+  | { [TYPE]: any }
   ? true
   : false;
 
-// TODO: find a way to prevent per env values match the widened default type
-export type ConfigValPerEnv<D extends ConfigVal = ConfigVal> = {
-  [DEFAULT]?: D;
-  [ENV_VAR]?: string;
-  [DATA]?: any;
-} & Record<string, D>;
+export type ConfigValPerEnvTyped<T extends TypeTag> = {
+  readonly [TYPE]: T;
+  readonly [DEFAULT]?: TypeMap[T] | ConfigValFn<TypeMap[T]>;
+  readonly [ENV]?: string;
+  readonly [DATA]?: any;
+  readonly [key: string]: TypeMap[T] | ConfigValFn<TypeMap[T]>;
+};
+
+export type ConfigValPerEnvFetcher = {
+  readonly [TYPE]?: never;
+  readonly [DEFAULT]?: string | ConfigValFn<string>;
+  readonly [ENV]?: string;
+  readonly [DATA]?: any;
+  readonly [key: string]: string | ConfigValFn<string> | undefined;
+};
+
+export type ConfigValPerEnvPlain<D extends ConfigVal = ConfigVal> = {
+  readonly [TYPE]?: never;
+  readonly [DEFAULT]?: D;
+  readonly [ENV]?: never;
+  readonly [DATA]?: never;
+  readonly [key: string]: D;
+};
+
+export type ConfigValPerEnv =
+  | ConfigValPerEnvTyped<TypeTag>
+  | ConfigValPerEnvFetcher
+  | ConfigValPerEnvPlain;
 
 export type Config = {
   [key: string]: Config | ConfigVal | ConfigValPerEnv;
 };
 
-export type ResolvedValue<V> = V extends (...args: any[]) => any ? Awaited<ReturnType<V>> : V;
+export type ValidateConfig<C> = {
+  [K in keyof C]: C[K] extends { [TYPE]: infer T extends TypeTag }
+    ? ConfigValPerEnvTyped<T>
+    : C[K] extends { [ENV]: any } | { [DATA]: any }
+      ? ConfigValPerEnvFetcher
+      : C[K] extends { [DEFAULT]: any }
+        ? C[K]
+        : C[K] extends Obj
+          ? ValidateConfig<C[K]>
+          : C[K];
+};
+
+type WidenLiteral<T> = T extends boolean
+  ? boolean
+  : T extends number
+    ? number
+    : T extends string
+      ? string
+      : T extends readonly (infer E)[]
+        ? WidenLiteral<E>[]
+        : T;
+
+export type ResolvedValue<V> = V extends (...args: any[]) => any
+  ? Awaited<ReturnType<V>>
+  : WidenLiteral<V>;
 
 export type ResolvedConfig<C> = {
   [K in keyof C]: C[K] extends Obj
     ? IsConfigValPerEnv<C[K]> extends true
-      ? C[K] extends ConfigValPerEnv<infer D>
-        ? ResolvedValue<D>
-        : ResolvedConfig<C[K]>
+      ? ResolveNode<C[K]>
       : ResolvedConfig<C[K]>
     : ResolvedValue<C[K]>;
 };
 
-export type MakeConfig<R extends Config> = (env: string) => Promise<R>;
+type IsNestedConfig<T> = T extends Obj ? (IsConfigValPerEnv<T> extends true ? false : true) : false;
 
-export type ResolvedEnvVars<C> = {
-  [K in keyof C]: C[K] extends ConfigValPerEnv<infer V>
-    ? C[K][typeof ENV_VAR] extends string
-      ? V
-      : undefined
-    : C[K] extends Obj
-      ? ResolvedEnvVars<C[K]>
-      : Awaited<C[K]>;
-};
+export type Paths<C> = C extends Obj
+  ? {
+      [K in keyof C & string]: IsNestedConfig<C[K]> extends true
+        ? K | `${K}.${Paths<C[K]> & string}`
+        : K;
+    }[keyof C & string]
+  : never;
 
-export interface ResolvedSecret {
-  secret: string;
-  path: string;
-  value: unknown;
-  envVar?: string;
-}
+export type SubtreePaths<C> = C extends Obj
+  ? {
+      [K in keyof C & string]: IsNestedConfig<C[K]> extends true
+        ? K | `${K}.${SubtreePaths<C[K]> & string}`
+        : never;
+    }[keyof C & string]
+  : never;
 
-export interface ConfigFlatMapContext {
-  path: string;
-  unresolvedValue: ConfigVal;
+type ResolveNode<T> = T extends Obj
+  ? IsConfigValPerEnv<T> extends true
+    ? T extends { [TYPE]: infer Tag extends TypeTag }
+      ? TypeMap[Tag]
+      : T extends { [ENV]: any } | { [DATA]: any }
+        ? string
+        : T extends ConfigValPerEnvPlain<infer D>
+          ? ResolvedValue<D>
+          : never
+    : ResolvedConfig<T>
+  : ResolvedValue<T>;
+
+export type ValueAtPath<C, P extends string> = P extends `${infer Head}.${infer Rest}`
+  ? Head extends keyof C
+    ? ValueAtPath<C[Head], Rest>
+    : never
+  : P extends keyof C
+    ? ResolveNode<C[P]>
+    : never;
+
+export interface FetcherContext<D = unknown> {
+  env: string;
+  default?: D;
   envVar?: string;
   data?: unknown;
+  type?: TypeTag;
+}
+
+export type Fetcher<D = unknown, T = unknown> = (
+  context: FetcherContext<D>,
+) => Promise<T | undefined>;
+
+export interface ConfigEntry {
+  path: string;
+  value?: unknown;
+  default?: unknown;
+  envVar?: string;
+  data?: unknown;
+  type?: TypeTag;
 }
 
 export type Confetti<C> = {
   [CONFETTI]: "CONFETTI";
   (env: string): {
     config: C;
-    flatMap: <T>(transform: (context: ConfigFlatMapContext) => T | T[]) => T[];
-    resolve: () => Promise<ResolvedConfig<C>>;
-    resolveSync: () => ResolvedConfig<C>;
-    resolveValue: (path: string) => Promise<string>;
-    resolveValueSync: (path: string) => string;
-    resolveEnv: () => Promise<Obj<string>>;
+    get<P extends Paths<C> & string>(path: P): ValueAtPath<C, P>;
+    resolve<P extends Paths<C> & string>(path: P, fetcher: Fetcher): Promise<ValueAtPath<C, P>>;
+    entries(startPath?: SubtreePaths<C> & string): IterableIterator<[string, ConfigEntry]>;
   };
 };
 
