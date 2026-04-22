@@ -119,20 +119,30 @@ test("[ENV]/[DATA] without [TYPE] infers string", () => {
 });
 
 test("[TYPE] constrains sibling [DEFAULT] and per-env values", () => {
-  makeConfig({
-    // @ts-expect-error — default must be number when [TYPE] is "number"
-    port: { [TYPE]: "number", [DEFAULT]: "not-a-number" },
-  });
+  // @ts-expect-error — default must be number when [TYPE] is "number"
+  makeConfig({ port: { [TYPE]: "number", [DEFAULT]: "not-a-number" } });
 
-  makeConfig({
-    // @ts-expect-error — per-env value must be number when [TYPE] is "number"
-    port: { [TYPE]: "number", [DEFAULT]: 3000, prod: "nope" },
-  });
+  // @ts-expect-error — per-env value must be number when [TYPE] is "number"
+  makeConfig({ port: { [TYPE]: "number", [DEFAULT]: 3000, prod: "nope" } });
 
   // valid — all siblings are numbers
   makeConfig({
     port: { [TYPE]: "number", [DEFAULT]: 3000, prod: 8080 },
   });
+});
+
+test("factory form preserves inferred literal types", () => {
+  const factoryConfig = makeConfig((env: string) => ({
+    numberProp: 42,
+    stringProp: `val-${env}`,
+    typed: { [TYPE]: "number", [ENV]: "X", [DEFAULT]: 7 },
+    secret: { [DATA]: "s", [DEFAULT]: "" },
+  }))("dev");
+
+  expectTypeOf(factoryConfig.get("numberProp")).toEqualTypeOf<number>();
+  expectTypeOf(factoryConfig.get("stringProp")).toEqualTypeOf<string>();
+  expectTypeOf(factoryConfig.get("typed")).toEqualTypeOf<number>();
+  expectTypeOf(factoryConfig.get("secret")).toEqualTypeOf<string>();
 });
 
 test("get()/resolve() without a path returns the full resolved config", async () => {
@@ -145,8 +155,6 @@ test("get()/resolve() without a path returns the full resolved config", async ()
 });
 
 test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
-  makeConfig({
-    // @ts-expect-error — no [TYPE], so default must be string
-    port: { [ENV]: "PORT", [DEFAULT]: 3000 },
-  });
+  // @ts-expect-error — no [TYPE], so default must be string
+  makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000 } });
 });

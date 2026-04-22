@@ -11,9 +11,13 @@ import {
   resolveSubtreeSync,
 } from "./util";
 
-export const makeConfig = <const C extends Config>(
+export function makeConfig<const C extends Config>(
+  input: (env: string) => C & ValidateConfig<C>,
+): Confetti<C>;
+export function makeConfig<const C extends Config>(input: C & ValidateConfig<C>): Confetti<C>;
+export function makeConfig<const C extends Config>(
   input: (C & ValidateConfig<C>) | ((env: string) => C & ValidateConfig<C>),
-): Confetti<C> => {
+): Confetti<C> {
   const factory = typeof input === "function" ? input : () => input;
 
   const confetti = (env: string) => {
@@ -58,4 +62,4 @@ export const makeConfig = <const C extends Config>(
   confetti[CONFETTI] = "CONFETTI" as const;
 
   return confetti as Confetti<C>;
-};
+}
