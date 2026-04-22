@@ -1,14 +1,5 @@
 import { CONFETTI } from "./symbols";
-import type {
-  Confetti,
-  Config,
-  ConfigEntry,
-  Fetcher,
-  Paths,
-  SubtreePaths,
-  ValidateConfig,
-  ValueAtPath,
-} from "./types";
+import type { Confetti, Config, ConfigEntry, Fetcher, SubtreePaths, ValidateConfig } from "./types";
 import {
   buildEntry,
   entriesIter,
@@ -28,23 +19,27 @@ export const makeConfig = <const C extends Config>(
   const confetti = (env: string) => {
     const config = factory(env);
 
-    const get = <P extends Paths<C> & string>(path: P): ValueAtPath<C, P> => {
+    const get = (path?: string): unknown => {
+      if (!path) return resolveSubtreeSync(config, "", env);
       const node = getAtPath(config, path);
-      const resolved = isNestedConfig(node)
+      return isNestedConfig(node)
         ? resolveSubtreeSync(node, path, env)
         : resolveEntrySync(buildEntry(node, path, env), env);
-      return resolved as ValueAtPath<C, P>;
     };
 
-    const resolve = async <P extends Paths<C> & string>(
-      path: P,
-      fetcher: Fetcher,
-    ): Promise<ValueAtPath<C, P>> => {
+    const resolve = async (
+      pathOrFetcher: string | Fetcher,
+      maybeFetcher?: Fetcher,
+    ): Promise<unknown> => {
+      if (typeof pathOrFetcher === "function") {
+        return resolveSubtreeAsync(config, "", env, pathOrFetcher);
+      }
+      const path = pathOrFetcher;
+      const fetcher = maybeFetcher!;
       const node = getAtPath(config, path);
-      const resolved = isNestedConfig(node)
-        ? await resolveSubtreeAsync(node, path, env, fetcher)
-        : await resolveEntryAsync(buildEntry(node, path, env), env, fetcher);
-      return resolved as ValueAtPath<C, P>;
+      return isNestedConfig(node)
+        ? resolveSubtreeAsync(node, path, env, fetcher)
+        : resolveEntryAsync(buildEntry(node, path, env), env, fetcher);
     };
 
     const entries = (

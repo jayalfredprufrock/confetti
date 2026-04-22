@@ -135,6 +135,15 @@ test("[TYPE] constrains sibling [DEFAULT] and per-env values", () => {
   });
 });
 
+test("get()/resolve() without a path returns the full resolved config", async () => {
+  const full = c.get();
+  const _fullForward: { numberProp: number; stringProp: string } = full;
+  void _fullForward;
+
+  const fullAsync = c.resolve(async () => undefined);
+  expectTypeOf(fullAsync).resolves.toHaveProperty("numberProp");
+});
+
 test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
   makeConfig({
     // @ts-expect-error — no [TYPE], so default must be string

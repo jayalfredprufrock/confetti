@@ -105,6 +105,9 @@ cfg.get("feature.enabled"); // true  (typed as boolean)
 
 // Entire subtrees are fine too — everything resolves synchronously.
 cfg.get("feature"); // { enabled: true, limit: 50 }
+
+// Omit the path to get the entire resolved config.
+cfg.get(); // { appName, port, feature: {...}, apiUrl, ... }
 ```
 
 _If a leaf cannot be resolved syncronously, `get` throws. See `resolve` below for handling async configuration._
@@ -148,6 +151,11 @@ const password = await cfg.resolve("dbPassword", async (ctx) => {
   // ctx = { env: 'prod', envVar: 'DB_PASSWORD', data: 'prod/db/password', default: '' }
   const secret = await secretsClient.getSecretValue({ SecretId: ctx.data });
   return secret.SecretString;
+});
+
+// Omit the path to resolve the entire config — fetcher is invoked per leaf that needs it.
+const fullConfig = await cfg.resolve(async (ctx) => {
+  /* ... */
 });
 ```
 
@@ -230,13 +238,13 @@ for (const [path, entry] of cfg.entries()) {
 
 ## API
 
-| Method             | Signature                                           | Notes                                                                          |
-| ------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------ |
-| `makeConfig`       | `(config \| (env) => config) => Confetti`           | Accepts a config object or factory fn.                                         |
-| `confetti(env)`    | `(env: string) => Accessor`                         | Binds an environment.                                                          |
-| `accessor.get`     | `(path) => value`                                   | Sync. Throws if async resolution is required.                                  |
-| `accessor.resolve` | `(path, fetcher) => Promise<value>`                 | Async. Fetcher invoked per leaf that needs it.                                 |
-| `accessor.entries` | `(startPath?) => IterableIterator<[string, Entry]>` | Lazy iterator of every leaf with its metadata; optionally scoped to a subtree. |
+| Method             | Signature                                           | Notes                                                                                                  |
+| ------------------ | --------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `makeConfig`       | `(config \| (env) => config) => Confetti`           | Accepts a config object or factory fn.                                                                 |
+| `confetti(env)`    | `(env: string) => Accessor`                         | Binds an environment.                                                                                  |
+| `accessor.get`     | `(path?) => value`                                  | Sync. Path is optional — omit to get the full resolved config. Throws if async resolution is required. |
+| `accessor.resolve` | `(path?, fetcher) => Promise<value>`                | Async. Path is optional — omit to resolve the full config. Fetcher invoked per leaf that needs it.     |
+| `accessor.entries` | `(startPath?) => IterableIterator<[string, Entry]>` | Lazy iterator of every leaf with its metadata; optionally scoped to a subtree.                         |
 
 ## License
 

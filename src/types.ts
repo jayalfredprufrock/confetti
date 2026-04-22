@@ -157,7 +157,9 @@ export type Confetti<C> = {
   [CONFETTI]: "CONFETTI";
   (env: string): {
     config: C;
+    get(): ResolvedConfig<C>;
     get<P extends Paths<C> & string>(path: P): ValueAtPath<C, P>;
+    resolve(fetcher: Fetcher): Promise<ResolvedConfig<C>>;
     resolve<P extends Paths<C> & string>(path: P, fetcher: Fetcher): Promise<ValueAtPath<C, P>>;
     entries(startPath?: SubtreePaths<C> & string): IterableIterator<[string, ConfigEntry]>;
   };

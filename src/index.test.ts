@@ -293,6 +293,36 @@ describe("dynamic value functions", () => {
   });
 });
 
+describe("get/resolve — no path", () => {
+  test("get() returns the entire resolved config", () => {
+    const config = makeConfig({
+      flat: "value",
+      nested: {
+        inner: 10,
+        perEnv: { [DEFAULT]: "default", prod: "prod-value" },
+      },
+    });
+    expect(config("prod").get()).toEqual({
+      flat: "value",
+      nested: { inner: 10, perEnv: "prod-value" },
+    });
+  });
+
+  test("resolve() returns the entire resolved config, fetching leaves that need it", async () => {
+    const config = makeConfig({
+      flat: "value",
+      secret: { [DATA]: "remote-secret" },
+    });
+    const calls: string[] = [];
+    const result = await config("dev").resolve(async (ctx) => {
+      calls.push(String(ctx.data));
+      return "fetched-secret";
+    });
+    expect(result).toEqual({ flat: "value", secret: "fetched-secret" });
+    expect(calls).toEqual(["remote-secret"]);
+  });
+});
+
 describe("[TYPE] — env var coercion", () => {
   const VAR = "CONFETTI_TYPE_VAR";
   beforeEach(() => {
