@@ -19,6 +19,19 @@ export type TypeMap = {
   "boolean[]": boolean[];
 };
 
+/** A [TYPE] declared as a tuple of allowed literals, e.g. `["debug", "info", "warn"]`. */
+export type LiteralTuple = readonly Exclude<Primitive, null>[];
+
+/** Anything valid in the [TYPE] slot: a built-in tag string or a literal tuple. */
+export type TypeTagOrLiterals = TypeTag | LiteralTuple;
+
+/** Maps a [TYPE] value to the TypeScript type it resolves to. */
+export type ResolveTag<Tag> = Tag extends TypeTag
+  ? TypeMap[Tag]
+  : Tag extends readonly (infer E)[]
+    ? E
+    : never;
+
 export type IsConfigValPerEnv<T> = T extends
   | { [DEFAULT]: any }
   | { [ENV]: any }
@@ -27,12 +40,12 @@ export type IsConfigValPerEnv<T> = T extends
   ? true
   : false;
 
-export type ConfigValPerEnvTyped<T extends TypeTag> = {
+export type ConfigValPerEnvTyped<T extends TypeTagOrLiterals> = {
   readonly [TYPE]: T;
-  readonly [DEFAULT]?: TypeMap[T] | ConfigValFn<TypeMap[T]>;
+  readonly [DEFAULT]?: ResolveTag<T> | ConfigValFn<ResolveTag<T>>;
   readonly [ENV]?: string;
   readonly [DATA]?: any;
-  readonly [key: string]: TypeMap[T] | ConfigValFn<TypeMap[T]>;
+  readonly [key: string]: ResolveTag<T> | ConfigValFn<ResolveTag<T>>;
 };
 
 export type ConfigValPerEnvFetcher = {
@@ -52,7 +65,7 @@ export type ConfigValPerEnvPlain<D extends ConfigVal = ConfigVal> = {
 };
 
 export type ConfigValPerEnv =
-  | ConfigValPerEnvTyped<TypeTag>
+  | ConfigValPerEnvTyped<TypeTagOrLiterals>
   | ConfigValPerEnvFetcher
   | ConfigValPerEnvPlain;
 
@@ -61,7 +74,7 @@ export type Config = {
 };
 
 export type ValidateConfig<C> = {
-  [K in keyof C]: C[K] extends { [TYPE]: infer T extends TypeTag }
+  [K in keyof C]: C[K] extends { [TYPE]: infer T extends TypeTagOrLiterals }
     ? ConfigValPerEnvTyped<T>
     : C[K] extends { [ENV]: any } | { [DATA]: any }
       ? ConfigValPerEnvFetcher
@@ -114,8 +127,8 @@ export type SubtreePaths<C> = C extends Obj
 
 type ResolveNode<T> = T extends Obj
   ? IsConfigValPerEnv<T> extends true
-    ? T extends { [TYPE]: infer Tag extends TypeTag }
-      ? TypeMap[Tag]
+    ? T extends { [TYPE]: infer Tag extends TypeTagOrLiterals }
+      ? ResolveTag<Tag>
       : T extends { [ENV]: any } | { [DATA]: any }
         ? string
         : T extends ConfigValPerEnvPlain<infer D>
@@ -137,7 +150,7 @@ export interface FetcherContext<D = unknown> {
   default?: D;
   envVar?: string;
   data?: unknown;
-  type?: TypeTag;
+  type?: TypeTagOrLiterals;
 }
 
 export type Fetcher<D = unknown, T = unknown> = (
@@ -150,7 +163,7 @@ export interface ConfigEntry {
   default?: unknown;
   envVar?: string;
   data?: unknown;
-  type?: TypeTag;
+  type?: TypeTagOrLiterals;
 }
 
 export type Confetti<C> = {

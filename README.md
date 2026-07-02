@@ -127,7 +127,7 @@ const cfg = config("prod");
 cfg.get("port"); // typed as number — env var "8080" coerced to 8080
 ```
 
-Supported tags: `"string" | "number" | "boolean" | "string[]" | "number[]" | "boolean[]"`.
+Supported tags: `"string" | "number" | "boolean" | "string[]" | "number[]" | "boolean[]"`, or a tuple of literals for a constrained union (see [below](#literal-unions-with-a-tuple-type)).
 
 **Coercion rules (env vars and string fetcher returns):**
 
@@ -141,6 +141,28 @@ Supported tags: `"string" | "number" | "boolean" | "string[]" | "number[]" | "bo
 `[TYPE]` also constrains `[DEFAULT]` and per-env values at compile time — `{ [TYPE]: "number", [DEFAULT]: "nope" }` is a type error.
 
 **When `[ENV]` or `[DATA]` are present without `[TYPE]`:** values are required to be strings (both `[DEFAULT]` and per-env overrides). The fetcher must also return a string. If you need a non-string here, add `[TYPE]`.
+
+#### Literal unions with a tuple `[TYPE]`
+
+Pass a tuple of allowed values instead of a tag string to type a leaf as a literal union _and_ validate external values against the set at runtime. This is the sound way to get a literal-union type out of an env var or fetched secret — the allowed values exist at runtime, so an out-of-set value throws rather than being silently trusted.
+
+```ts
+const config = makeConfig({
+  logLevel: { [TYPE]: ["debug", "info", "warn", "error"], [ENV]: "LOG_LEVEL", [DEFAULT]: "info" },
+  port: { [TYPE]: [80, 443, 8080], [DEFAULT]: 80 },
+});
+
+const cfg = config("prod");
+cfg.get("logLevel"); // typed "debug" | "info" | "warn" | "error"
+cfg.get("port"); // typed 80 | 443 | 8080
+```
+
+- **Inference:** the leaf resolves to the union of the tuple members, not the widened base type. No `as const` needed — the tuple is captured for you.
+- **Constraint:** `[DEFAULT]` and per-env values must be members — `{ [TYPE]: ["debug", "info"], [DEFAULT]: "nope" }` is a type error.
+- **Coercion (env vars / string fetcher returns):** each member is tried in declaration order — string members match the raw value directly, number members via `Number(raw)`, boolean members via `"true"`/`"false"`. The first match wins; a raw value matching no member throws.
+- **Mixed sets are allowed** — `["auto", 0, 1, 3]` resolves to `"auto" | 0 | 1 | 3`, and `process.env` values coerce to the right member (`"auto"` → `"auto"`, `"3"` → `3`).
+
+> **Ambiguity:** when a raw string could satisfy two members — e.g. `[1, "1"]` given `"1"`, or `["true", true]` given `"true"` — declaration order decides which one wins. Order such sets intentionally, or avoid the overlap.
 
 ### Async reads with `resolve`
 
@@ -245,6 +267,10 @@ for (const [path, entry] of cfg.entries()) {
 | `accessor.get`     | `(path?) => value`                                  | Sync. Path is optional — omit to get the full resolved config. Throws if async resolution is required. |
 | `accessor.resolve` | `(path?, fetcher) => Promise<value>`                | Async. Path is optional — omit to resolve the full config. Fetcher invoked per leaf that needs it.     |
 | `accessor.entries` | `(startPath?) => IterableIterator<[string, Entry]>` | Lazy iterator of every leaf with its metadata; optionally scoped to a subtree.                         |
+
+## TODO
+
+- maybe .map() would be more convenient than entries() iterator?
 
 ## License
 

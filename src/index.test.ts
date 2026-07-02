@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, test } from "vite-plus/test";
 import { makeConfig } from "./make-config";
 import { DATA, DEFAULT, ENV, TYPE } from "./symbols";
+import type { TypeTagOrLiterals } from "./types";
 
 describe("makeConfig — input forms", () => {
   test("accepts a plain config object", () => {
@@ -428,11 +429,90 @@ describe("[TYPE] — fetcher coercion", () => {
     const config = makeConfig({
       port: { [TYPE]: "number", [DATA]: "remote-port" },
     });
-    let seen: string | undefined;
+    let seen: TypeTagOrLiterals | undefined;
     await config("dev").resolve("port", async (ctx) => {
       seen = ctx.type;
       return 1;
     });
     expect(seen).toBe("number");
+  });
+});
+
+describe("[TYPE] — literal tuple", () => {
+  const VAR = "CONFETTI_LITERAL_VAR";
+  beforeEach(() => {
+    delete process.env[VAR];
+  });
+  afterEach(() => {
+    delete process.env[VAR];
+  });
+
+  test("returns the default literal when nothing overrides it", () => {
+    const config = makeConfig({
+      logLevel: { [TYPE]: ["debug", "info", "warn", "error"], [DEFAULT]: "info" },
+    });
+    expect(config("dev").get("logLevel")).toBe("info");
+  });
+
+  test("accepts an env var that is a member of the set", () => {
+    process.env[VAR] = "warn";
+    const config = makeConfig({
+      logLevel: { [TYPE]: ["debug", "info", "warn", "error"], [ENV]: VAR, [DEFAULT]: "info" },
+    });
+    expect(config("dev").get("logLevel")).toBe("warn");
+  });
+
+  test("throws when an env var is not a member of the set", () => {
+    process.env[VAR] = "banana";
+    const config = makeConfig({
+      logLevel: { [TYPE]: ["debug", "info", "warn", "error"], [ENV]: VAR, [DEFAULT]: "info" },
+    });
+    expect(() => config("dev").get("logLevel")).toThrow(/is not one of/);
+  });
+
+  test("coerces and validates numeric literal tuples", () => {
+    process.env[VAR] = "443";
+    const config = makeConfig({
+      port: { [TYPE]: [80, 443, 8080], [ENV]: VAR, [DEFAULT]: 80 },
+    });
+    expect(config("dev").get("port")).toBe(443);
+  });
+
+  test("throws when a numeric env var is out of the set", () => {
+    process.env[VAR] = "9999";
+    const config = makeConfig({
+      port: { [TYPE]: [80, 443, 8080], [ENV]: VAR, [DEFAULT]: 80 },
+    });
+    expect(() => config("dev").get("port")).toThrow(/is not one of/);
+  });
+
+  test("validates a string fetcher return against the set", async () => {
+    const config = makeConfig({
+      tier: { [TYPE]: ["free", "pro", "enterprise"], [DATA]: "billing/tier" },
+    });
+    const result = await config("dev").resolve("tier", async () => "pro");
+    expect(result).toBe("pro");
+    await expect(config("dev").resolve("tier", async () => "unlimited")).rejects.toThrow(
+      /is not one of/,
+    );
+  });
+
+  test("supports mixed-kind sets, coercing env vars to the right member", () => {
+    const make = () =>
+      makeConfig({
+        retries: { [TYPE]: ["auto", 0, 1, 3], [ENV]: VAR, [DEFAULT]: "auto" },
+      });
+
+    process.env[VAR] = "auto";
+    expect(make()("dev").get("retries")).toBe("auto");
+
+    process.env[VAR] = "3";
+    expect(make()("dev").get("retries")).toBe(3);
+
+    process.env[VAR] = "0";
+    expect(make()("dev").get("retries")).toBe(0);
+
+    process.env[VAR] = "5";
+    expect(() => make()("dev").get("retries")).toThrow(/is not one of/);
   });
 });

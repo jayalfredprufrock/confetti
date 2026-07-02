@@ -158,3 +158,37 @@ test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
   // @ts-expect-error — no [TYPE], so default must be string
   makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000 } });
 });
+
+test("[TYPE] as a literal tuple resolves to the union", () => {
+  const c = makeConfig({
+    logLevel: { [TYPE]: ["debug", "info", "warn", "error"], [ENV]: "LOG_LEVEL", [DEFAULT]: "info" },
+    port: { [TYPE]: [80, 443, 8080], [DEFAULT]: 80 },
+  })("dev");
+
+  expectTypeOf(c.get("logLevel")).toEqualTypeOf<"debug" | "info" | "warn" | "error">();
+  expectTypeOf(c.get("port")).toEqualTypeOf<80 | 443 | 8080>();
+});
+
+test("[TYPE] as a mixed-kind literal tuple resolves to the union", () => {
+  const c = makeConfig({
+    retries: { [TYPE]: ["auto", 0, 1, 3], [ENV]: "RETRIES", [DEFAULT]: "auto" },
+  })("dev");
+
+  expectTypeOf(c.get("retries")).toEqualTypeOf<"auto" | 0 | 1 | 3>();
+
+  // @ts-expect-error — default must still be a member of the mixed set
+  makeConfig({ retries: { [TYPE]: ["auto", 0, 1], [DEFAULT]: 5 } });
+});
+
+test("literal tuple [TYPE] constrains [DEFAULT] and per-env values", () => {
+  // @ts-expect-error — default must be a member of the tuple
+  makeConfig({ logLevel: { [TYPE]: ["debug", "info"], [DEFAULT]: "nope" } });
+
+  // @ts-expect-error — per-env value must be a member of the tuple
+  makeConfig({ logLevel: { [TYPE]: ["debug", "info"], [DEFAULT]: "info", prod: "nope" } });
+
+  // valid — all siblings are members
+  makeConfig({
+    logLevel: { [TYPE]: ["debug", "info"], [DEFAULT]: "info", prod: "debug" },
+  });
+});

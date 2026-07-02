@@ -5,8 +5,10 @@ import type {
   ConfigValPerEnv,
   Fetcher,
   FetcherContext,
+  LiteralTuple,
   Obj,
-  TypeTag,
+  Primitive,
+  TypeTagOrLiterals,
 } from "./types";
 
 export const isObj = (val: unknown): val is Obj => {
@@ -50,7 +52,32 @@ export const getAtPath = (config: Obj, path: string): unknown => {
   return node;
 };
 
-const matchesType = (val: unknown, type: TypeTag): boolean => {
+/**
+ * Coerce a raw string to whichever member of `members` it represents, or throw.
+ * Members may be of mixed kinds; each is tried in declaration order — a string
+ * member matches directly, a number member via `Number(raw)`, a boolean member
+ * via "true"/"false". First match wins (matters only for ambiguous sets like
+ * `[1, "1"]`, where declaration order decides).
+ */
+const coerceLiteral = (raw: string, members: LiteralTuple, path: string): Primitive => {
+  for (const m of members) {
+    if (typeof m === "string") {
+      if (raw === m) return m;
+    } else if (typeof m === "number") {
+      if (raw !== "" && Number(raw) === m) return m;
+    } else if (typeof m === "boolean") {
+      if (raw === String(m)) return m;
+    }
+  }
+  throw new Error(`Value '${raw}' at '${path}' is not one of ${JSON.stringify(members)}.`);
+};
+
+/** Human-readable form of a [TYPE] tag for error messages. */
+const tagLabel = (type: TypeTagOrLiterals): string =>
+  Array.isArray(type) ? JSON.stringify(type) : String(type);
+
+const matchesType = (val: unknown, type: TypeTagOrLiterals): boolean => {
+  if (Array.isArray(type)) return (type as readonly unknown[]).includes(val);
   if (type === "string") return typeof val === "string";
   if (type === "number") return typeof val === "number" && !Number.isNaN(val);
   if (type === "boolean") return typeof val === "boolean";
@@ -59,7 +86,8 @@ const matchesType = (val: unknown, type: TypeTag): boolean => {
   return val.every((x) => typeof x === elem);
 };
 
-export const coerceFromString = (raw: string, type: TypeTag, path: string): unknown => {
+export const coerceFromString = (raw: string, type: TypeTagOrLiterals, path: string): unknown => {
+  if (Array.isArray(type)) return coerceLiteral(raw, type, path);
   if (type === "string") return raw;
   if (type === "number") {
     if (raw === "") throw new Error(`Cannot coerce empty string to number at '${path}'.`);
@@ -76,19 +104,25 @@ export const coerceFromString = (raw: string, type: TypeTag, path: string): unkn
   try {
     parsed = JSON.parse(raw);
   } catch {
-    throw new Error(`Cannot coerce '${raw}' to ${type} at '${path}' (invalid JSON).`);
+    throw new Error(`Cannot coerce '${raw}' to ${tagLabel(type)} at '${path}' (invalid JSON).`);
   }
   if (!Array.isArray(parsed)) {
-    throw new Error(`Cannot coerce '${raw}' to ${type} at '${path}' (not an array).`);
+    throw new Error(`Cannot coerce '${raw}' to ${tagLabel(type)} at '${path}' (not an array).`);
   }
   const elem = type.slice(0, -2);
   if (!parsed.every((x) => typeof x === elem)) {
-    throw new Error(`Cannot coerce '${raw}' to ${type} at '${path}' (element type mismatch).`);
+    throw new Error(
+      `Cannot coerce '${raw}' to ${tagLabel(type)} at '${path}' (element type mismatch).`,
+    );
   }
   return parsed;
 };
 
-const coerceFetched = (fetched: unknown, type: TypeTag | undefined, path: string): unknown => {
+const coerceFetched = (
+  fetched: unknown,
+  type: TypeTagOrLiterals | undefined,
+  path: string,
+): unknown => {
   if (type === undefined) {
     if (typeof fetched !== "string") {
       throw new Error(
@@ -99,7 +133,9 @@ const coerceFetched = (fetched: unknown, type: TypeTag | undefined, path: string
   }
   if (typeof fetched === "string") return coerceFromString(fetched, type, path);
   if (matchesType(fetched, type)) return fetched;
-  throw new Error(`Fetcher for '${path}' returned value that doesn't match [TYPE] '${type}'.`);
+  throw new Error(
+    `Fetcher for '${path}' returned value that doesn't match [TYPE] '${tagLabel(type)}'.`,
+  );
 };
 
 export const buildEntry = (node: unknown, path: string, env: string): ConfigEntry => {
