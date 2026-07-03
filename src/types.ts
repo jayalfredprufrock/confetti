@@ -179,3 +179,40 @@ export type Confetti<C> = {
 };
 
 export type GetConfig<T> = T extends Confetti<infer C> ? ResolvedConfig<C> : never;
+
+/**
+ * A covariant, read-only view of a {@link Confetti}, keyed on its *resolved* shape `R`
+ * rather than its raw input shape `C`.
+ *
+ * {@link Confetti}`<C>` is invariant in `C`: it exposes `config: C` and the path-typed
+ * `get<P>`/`resolve<P>`/`entries` overloads, all of which put `C` in an input position.
+ * That prevents a consumer from writing "accepts any config that resolves to (a supertype
+ * of) my base" without resorting to `GetConfig<T> extends Base ? …` generic gymnastics.
+ *
+ * This view exposes only the output-position members, so it is covariant in `R` — and
+ * `Confetti<C>` is structurally assignable to `ConfettiConfig<ResolvedConfig<C>>` (it has
+ * these members plus more). A consumer can therefore accept a resolved shape by name, with
+ * no generic parameter and no cast:
+ *
+ * ```ts
+ * function forRootAsync(opts: { config: ConfettiConfig<CoreConfig> }) {
+ *   const resolved = opts.config("prod").get(); // typed as CoreConfig
+ * }
+ * ```
+ *
+ * Passing a `Confetti<C>` whose resolved shape does not extend `CoreConfig` is a compile
+ * error at the call site. Consumers that need path access take the full {@link Confetti}`<C>`
+ * (and its invariance) instead.
+ *
+ * Key it on the resolved type (`R = ResolvedConfig<C>`) — the raw shape with its
+ * `[DEFAULT]`/`[ENV]`/… symbols is an implementation detail consumers shouldn't have to name.
+ * Keep the members output-only: adding `config: R`, a path overload, or `entries` would put
+ * `R` back in input position and reintroduce invariance.
+ */
+export type ConfettiConfig<R> = {
+  [CONFETTI]: "CONFETTI";
+  (env: string): {
+    get(): R;
+    resolve(fetcher: Fetcher): Promise<R>;
+  };
+};

@@ -80,14 +80,28 @@ const config = makeConfig((env: string) => ({
 }));
 ```
 
-Individual values can also be functions, which also provides an escape hatch if you need to provide an object as a config leaf value.
+> **Type errors land on the whole factory, not the offending member.** Because the config type is inferred from the function's return value, TypeScript validates it as a single return-type check and anchors any error to the `(env) => …` function rather than to the specific property — so a bad `[DEFAULT]` shows a wall of text at the call site instead of a squiggle on the value. This is a TypeScript limitation, not something the signature can work around. **When you only need `env` to compute a value or two, prefer an individual value function (below)** — errors there point at the value itself.
+
+#### Individual value functions
+
+Any leaf can be a function of `env`. This keeps the surrounding config statically typed (so type errors stay local) and doubles as an escape hatch for storing an object as a single leaf value:
 
 ```ts
 const config = makeConfig({
   serviceName: (env) => `my-app-${env}`,
-  objValue: (env) => ({ enabled: true, value: 42 }),
+  clientOptions: (env) => ({ enabled: true, region: env }),
 });
 ```
+
+**Caveats — a value function is an opaque leaf.** It's simply called with `env`; it does not participate in the per-env machinery. Specifically:
+
+- **No `[TYPE]`, `[ENV]`/`[DATA]`, per-env precedence, or coercion.** A function is not a per-env block. If you need an env-var override, a fetched secret, or `[TYPE]` coercion, use the object form (`{ [ENV]: … }`) — a function can't express those.
+- **Invisible to `entries()`.** For a function leaf, `entry.value` is _the function itself_ (not its result), and `envVar`/`data`/`type` are all absent. Metadata-driven tooling (required-env-var lists, IaC secret synthesis, readiness checks) can't see inside — so if you read `process.env` _inside_ a function, that dependency won't show up. Use the object form for anything such tooling needs to discover.
+- **Object returns are single leaves, not subtrees.** `clientOptions` above resolves as one value; there are no `clientOptions.enabled` paths and no per-key typing.
+- **Async functions can't be read with `get()`.** A function returning a `Promise` throws `requires async resolution` under `get()`; read it with `resolve()` instead.
+- **Re-invoked on every read, never memoized.** Each `get()` / `resolve()` calls the function again. Keep them pure and cheap; don't rely on side effects firing once.
+
+The factory form remains the right tool when you genuinely need `env` to shape _many_ values at once; individual value functions are the better default for one-off env-dependent leaves.
 
 ### Sync reads with `get`
 
@@ -218,6 +232,28 @@ for (const [path, entry] of cfg.entries("feature")) {
   // path is e.g. "feature.enabled", "feature.limit"
 }
 ```
+
+### Accepting a config in library code
+
+When you write a function or module that should accept _any_ config whose resolved shape contains the fields you need, use `ConfettiConfig<R>` — a covariant, read-only view keyed on the **resolved** shape:
+
+```ts
+import type { ConfettiConfig } from "@jayalfredprufrock/confetti";
+
+type CoreConfig = { appName: string; port: number };
+
+function forRootAsync(opts: { config: ConfettiConfig<CoreConfig> }) {
+  const resolved = opts.config("prod").get(); // typed as CoreConfig — no cast
+}
+```
+
+- Accepts any config whose resolved shape **extends** `CoreConfig` (extra fields are fine).
+- Rejects a mismatch **at the call site** — a missing field, or one that resolves to the wrong type, is a compile error.
+- No generic type parameter on your function, and `get()`/`resolve()` are properly typed.
+
+`ConfettiConfig<R>` intentionally exposes only the pathless `get()`/`resolve(fetcher)` — the output-position members — which is what makes it covariant in `R`. `Confetti<C>` (what `makeConfig` returns) is assignable to `ConfettiConfig<ResolvedConfig<C>>`, so you just pass it through. If a consumer needs typed **path** access (`get("a.b")`, `entries`), have them take the full `Confetti<C>` instead; it's invariant in `C`, so it can't be widened to a base shape this way.
+
+To name the resolved shape of a specific config value, use `GetConfig<typeof config>`.
 
 ## Real-world use cases
 

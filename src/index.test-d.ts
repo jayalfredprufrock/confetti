@@ -1,7 +1,7 @@
 import { expectTypeOf, test } from "vite-plus/test";
 import { makeConfig } from "./make-config";
 import { DATA, DEFAULT, ENV, TYPE } from "./symbols";
-import type { ConfigEntry } from "./types";
+import type { ConfettiConfig, ConfigEntry } from "./types";
 
 const config = makeConfig({
   numberProp: 42,
@@ -157,6 +157,43 @@ test("get()/resolve() without a path returns the full resolved config", async ()
 test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
   // @ts-expect-error — no [TYPE], so default must be string
   makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000 } });
+});
+
+type CoreConfig = { appName: string; port: number };
+
+test("ConfettiConfig — Confetti<C> is assignable to the resolved-view of its shape", () => {
+  const appConfig = makeConfig({ appName: "svc", port: 3000, extra: true });
+
+  // structurally assignable — no cast, no generic
+  const view: ConfettiConfig<CoreConfig> = appConfig;
+
+  // .get()/.resolve() are typed as the base shape
+  expectTypeOf(view("prod").get()).toEqualTypeOf<CoreConfig>();
+  expectTypeOf(view("prod").resolve(async () => undefined)).toEqualTypeOf<Promise<CoreConfig>>();
+});
+
+test("ConfettiConfig — consumer accepts any config whose resolved shape extends the base", () => {
+  // no generic type parameter on the consumer
+  const forRootAsync = (opts: { config: ConfettiConfig<CoreConfig> }) => opts.config("prod").get();
+
+  const wider = makeConfig({ appName: "svc", port: 3000, region: "us-east-1", nested: { a: 1 } });
+  expectTypeOf(forRootAsync({ config: wider })).toEqualTypeOf<CoreConfig>();
+
+  const missingPort = makeConfig({ appName: "svc" });
+  // @ts-expect-error — resolved shape lacks `port`, so it isn't a ConfettiConfig<CoreConfig>
+  forRootAsync({ config: missingPort });
+
+  const wrongType = makeConfig({ appName: "svc", port: "nope" });
+  // @ts-expect-error — `port` resolves to string, not number
+  forRootAsync({ config: wrongType });
+});
+
+test("ConfettiConfig — covariant in R", () => {
+  const appConfig = makeConfig({ appName: "svc", port: 3000 });
+  const specific: ConfettiConfig<CoreConfig> = appConfig;
+  // widening to a supertype view is allowed (covariance)
+  const wider: ConfettiConfig<{ appName: string }> = specific;
+  expectTypeOf(wider("prod").get()).toEqualTypeOf<{ appName: string }>();
 });
 
 test("[TYPE] as a literal tuple resolves to the union", () => {
