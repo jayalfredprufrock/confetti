@@ -188,6 +188,18 @@ test("ConfettiConfig — consumer accepts any config whose resolved shape extend
   forRootAsync({ config: wrongType });
 });
 
+test("ConfettiConfig — structural, no nominal brand (cross-version safe)", () => {
+  // An accessor of the right shape — as if produced by a *different* installed copy of
+  // confetti — satisfies the view. A unique-symbol brand key would have rejected it even
+  // though the runtime symbol (Symbol.for) is identical across versions.
+  const external = (_env: string) => ({
+    get: () => ({ appName: "svc", port: 3000 }),
+    resolve: async (_fetcher: unknown) => ({ appName: "svc", port: 3000 }),
+  });
+  const view: ConfettiConfig<CoreConfig> = external;
+  expectTypeOf(view("prod").get()).toEqualTypeOf<CoreConfig>();
+});
+
 test("ConfettiConfig — covariant in R", () => {
   const appConfig = makeConfig({ appName: "svc", port: 3000 });
   const specific: ConfettiConfig<CoreConfig> = appConfig;

@@ -1,4 +1,4 @@
-import { CONFETTI, DATA, DEFAULT, ENV, TYPE } from "./symbols";
+import { DATA, DEFAULT, ENV, TYPE } from "./symbols";
 
 export type Obj<T = unknown> = Record<string, T>;
 
@@ -167,7 +167,6 @@ export interface ConfigEntry {
 }
 
 export type Confetti<C> = {
-  [CONFETTI]: "CONFETTI";
   (env: string): {
     config: C;
     get(): ResolvedConfig<C>;
@@ -210,7 +209,6 @@ export type GetConfig<T> = T extends Confetti<infer C> ? ResolvedConfig<C> : nev
  * `R` back in input position and reintroduce invariance.
  */
 export type ConfettiConfig<R> = {
-  [CONFETTI]: "CONFETTI";
   (env: string): {
     get(): R;
     resolve(fetcher: Fetcher): Promise<R>;
