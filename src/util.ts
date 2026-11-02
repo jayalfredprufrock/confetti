@@ -164,6 +164,57 @@ export const buildEntry = (node: unknown, path: string, env: string): ConfigEntr
   return entry;
 };
 
+const TYPE_TAGS: ReadonlySet<unknown> = new Set([
+  "string",
+  "number",
+  "boolean",
+  "string[]",
+  "number[]",
+  "boolean[]",
+]);
+
+const isPrimitive = (val: unknown): boolean =>
+  val === null || typeof val === "string" || typeof val === "number" || typeof val === "boolean";
+
+const isValidLeaf = (val: unknown): boolean =>
+  isPrimitive(val) || typeof val === "function" || (Array.isArray(val) && val.every(isPrimitive));
+
+/**
+ * Walk a config tree and throw on any value the library can't handle, naming the offending path.
+ * Compile-time checks deliberately stop short of this (validating every leaf in the `makeConfig`
+ * parameter type is very expensive for TypeScript), so this is the backstop.
+ */
+export const assertValidConfig = (node: Obj, prefix = ""): void => {
+  for (const [key, val] of Object.entries(node)) {
+    const path = prefix + key;
+    if (isConfigValPerEnv(val)) {
+      const tag: unknown = val[TYPE];
+      if (
+        tag !== undefined &&
+        !TYPE_TAGS.has(tag) &&
+        !(Array.isArray(tag) && tag.length > 0 && tag.every((m) => m !== null && isPrimitive(m)))
+      ) {
+        throw new Error(`Invalid [TYPE] ${JSON.stringify(tag)} at '${path}'.`);
+      }
+    } else if (isNestedConfig(val)) {
+      if (Object.getPrototypeOf(val) !== Object.prototype && Object.getPrototypeOf(val) !== null) {
+        throw new Error(
+          `Config value at '${path}' is a class instance. Wrap it in a value function: (env) => value.`,
+        );
+      }
+      assertValidConfig(val, `${path}.`);
+    } else if (val === undefined) {
+      throw new Error(
+        `Config value at '${path}' is undefined. To read an env var, use { [ENV]: "VAR_NAME" }.`,
+      );
+    } else if (!isValidLeaf(val)) {
+      throw new Error(
+        `Config value at '${path}' must be a primitive, an array of primitives, or a function. Wrap other values in a value function: (env) => value.`,
+      );
+    }
+  }
+};
+
 export function* entriesIter(
   config: Obj,
   env: string,

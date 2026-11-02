@@ -76,13 +76,15 @@ export type Config = {
 export type ValidateConfig<C> = {
   [K in keyof C]: C[K] extends { [TYPE]: infer T extends TypeTagOrLiterals }
     ? ConfigValPerEnvTyped<T>
-    : C[K] extends { [ENV]: any } | { [DATA]: any }
-      ? ConfigValPerEnvFetcher
-      : C[K] extends { [DEFAULT]: any }
-        ? C[K]
-        : C[K] extends Obj
-          ? ValidateConfig<C[K]>
-          : C[K];
+    : C[K] extends { [TYPE]: any }
+      ? ConfigValPerEnvTyped<TypeTagOrLiterals>
+      : C[K] extends { [ENV]: any } | { [DATA]: any }
+        ? ConfigValPerEnvFetcher
+        : C[K] extends { [DEFAULT]: any }
+          ? C[K]
+          : C[K] extends Obj
+            ? ValidateConfig<C[K]>
+            : C[K];
 };
 
 type WidenLiteral<T> = T extends boolean

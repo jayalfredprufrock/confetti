@@ -516,3 +516,49 @@ describe("[TYPE] — literal tuple", () => {
     expect(() => make()("dev").get("retries")).toThrow(/is not one of/);
   });
 });
+
+describe("makeConfig — invalid values throw at build time", () => {
+  // Casts bypass the compile-time checks to simulate `any`-typed / JS inputs and
+  // the cases the types intentionally don't catch.
+  const build = (input: unknown) => () => makeConfig(input as any)("dev");
+
+  test("undefined leaf (e.g. an unset process.env read), including nested", () => {
+    expect(build({ port: undefined })).toThrow(/'port' is undefined.*\[ENV\]/);
+    expect(build({ db: { url: undefined } })).toThrow(/'db\.url' is undefined/);
+  });
+
+  test("class instances", () => {
+    expect(build({ a: { startedAt: new Date() } })).toThrow(/'a\.startedAt' is a class instance/);
+  });
+
+  test("arrays of non-primitives, symbols and bigints", () => {
+    expect(build({ hosts: [{ name: "a" }] })).toThrow(/'hosts' must be a primitive/);
+    expect(build({ s: Symbol("x") })).toThrow(/'s' must be a primitive/);
+    expect(build({ b: 10n })).toThrow(/'b' must be a primitive/);
+  });
+
+  test("unknown [TYPE] tag", () => {
+    expect(build({ a: { [TYPE]: "nope", [DEFAULT]: 1 } })).toThrow(
+      /Invalid \[TYPE\] "nope" at 'a'/,
+    );
+  });
+
+  test("factory form is validated too", () => {
+    expect(build((env: string) => ({ x: { y: env === "dev" ? undefined : "ok" } }))).toThrow(
+      /'x\.y' is undefined/,
+    );
+  });
+
+  test("valid leaves pass", () => {
+    expect(
+      build({
+        a: null,
+        b: [1, "x", true],
+        c: () => new Date(),
+        d: { [TYPE]: ["x", 1], [DEFAULT]: "x" },
+        e: { [DEFAULT]: "x", prod: "y" },
+        f: Object.assign(Object.create(null), { g: 1 }),
+      }),
+    ).not.toThrow();
+  });
+});

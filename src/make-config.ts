@@ -1,6 +1,7 @@
 import { CONFETTI } from "./symbols";
-import type { Confetti, Config, ConfigEntry, Fetcher, SubtreePaths, ValidateConfig } from "./types";
+import type { Confetti, ConfigEntry, Fetcher, Obj, SubtreePaths, ValidateConfig } from "./types";
 import {
+  assertValidConfig,
   buildEntry,
   entriesIter,
   getAtPath,
@@ -11,17 +12,18 @@ import {
   resolveSubtreeSync,
 } from "./util";
 
-export function makeConfig<const C extends Config>(
+export function makeConfig<const C extends Obj>(
   input: (env: string) => C & ValidateConfig<C>,
 ): Confetti<C>;
-export function makeConfig<const C extends Config>(input: C & ValidateConfig<C>): Confetti<C>;
-export function makeConfig<const C extends Config>(
+export function makeConfig<const C extends Obj>(input: C & ValidateConfig<C>): Confetti<C>;
+export function makeConfig<const C extends Obj>(
   input: (C & ValidateConfig<C>) | ((env: string) => C & ValidateConfig<C>),
 ): Confetti<C> {
   const factory = typeof input === "function" ? input : () => input;
 
   const confetti = (env: string) => {
     const config = factory(env);
+    assertValidConfig(config);
 
     const get = (path?: string): unknown => {
       if (!path) return resolveSubtreeSync(config, "", env);

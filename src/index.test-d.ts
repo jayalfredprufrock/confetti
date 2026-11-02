@@ -154,6 +154,11 @@ test("get()/resolve() without a path returns the full resolved config", async ()
   expectTypeOf(fullAsync).resolves.toHaveProperty("numberProp");
 });
 
+test("unknown [TYPE] tag is rejected", () => {
+  // @ts-expect-error — "nope" is not a supported tag
+  makeConfig({ a: { [TYPE]: "nope", [DEFAULT]: 1 } });
+});
+
 test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
   // @ts-expect-error — no [TYPE], so default must be string
   makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000 } });

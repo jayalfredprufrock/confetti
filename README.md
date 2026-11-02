@@ -103,6 +103,12 @@ const config = makeConfig({
 
 The factory form remains the right tool when you genuinely need `env` to shape _many_ values at once; individual value functions are the better default for one-off env-dependent leaves.
 
+### Valid leaf values
+
+A plain leaf must be a primitive (`string`, `number`, `boolean`, `null`), an array of primitives, or a value function. Anything else (`undefined`, class instances like `Date`, arrays of objects, symbols, bigints) or an unknown `[TYPE]` tag throws a path-specific error when the config is built for an environment (`config(env)`), before any value is read. Each leaf type is not checked at compile time, because doing so is very expensive for TypeScript on large configs.
+
+A common case is reading `process.env.X` directly into a leaf, which is `undefined` whenever the variable is unset. Use `{ [ENV]: "X" }` instead: it adds precedence and `[TYPE]` coercion, and `entries()` can see the dependency.
+
 ### Sync reads with `get`
 
 `get(path)` is synchronous. Per-env values are selected by precedence:
