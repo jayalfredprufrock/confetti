@@ -73,6 +73,20 @@ export type Config = {
   [key: string]: Config | ConfigVal | ConfigValPerEnv;
 };
 
+/**
+ * The `makeConfig` constraint. Deliberately a single (non-union) recursive object type: it
+ * supplies contextual types — `env` in value functions, mutable arrays under `const`
+ * inference — without the cost of relating every node against the {@link Config} union.
+ * Per-node correctness (e.g. `[DEFAULT]` matching `[TYPE]`) is enforced by {@link ValidateConfig}.
+ */
+export type ConfigInput = {
+  readonly [TYPE]?: TypeTagOrLiterals;
+  readonly [DEFAULT]?: ConfigVal;
+  readonly [ENV]?: string;
+  readonly [DATA]?: any;
+  readonly [key: string]: ConfigVal | ConfigInput;
+};
+
 export type ValidateConfig<C> = {
   [K in keyof C]: C[K] extends { [TYPE]: infer T extends TypeTagOrLiterals }
     ? ConfigValPerEnvTyped<T>

@@ -1,5 +1,12 @@
 import { CONFETTI } from "./symbols";
-import type { Confetti, ConfigEntry, Fetcher, Obj, SubtreePaths, ValidateConfig } from "./types";
+import type {
+  Confetti,
+  ConfigEntry,
+  ConfigInput,
+  Fetcher,
+  SubtreePaths,
+  ValidateConfig,
+} from "./types";
 import {
   assertValidConfig,
   buildEntry,
@@ -12,11 +19,11 @@ import {
   resolveSubtreeSync,
 } from "./util";
 
-export function makeConfig<const C extends Obj>(
+export function makeConfig<const C extends ConfigInput>(
   input: (env: string) => C & ValidateConfig<C>,
 ): Confetti<C>;
-export function makeConfig<const C extends Obj>(input: C & ValidateConfig<C>): Confetti<C>;
-export function makeConfig<const C extends Obj>(
+export function makeConfig<const C extends ConfigInput>(input: C & ValidateConfig<C>): Confetti<C>;
+export function makeConfig<const C extends ConfigInput>(
   input: (C & ValidateConfig<C>) | ((env: string) => C & ValidateConfig<C>),
 ): Confetti<C> {
   const factory = typeof input === "function" ? input : () => input;

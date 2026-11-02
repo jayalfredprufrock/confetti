@@ -246,3 +246,31 @@ test("literal tuple [TYPE] constrains [DEFAULT] and per-env values", () => {
     logLevel: { [TYPE]: ["debug", "info"], [DEFAULT]: "info", prod: "debug" },
   });
 });
+
+test("value functions get a contextually typed env (README pattern)", () => {
+  const cfg = makeConfig({
+    serviceName: (env) => `my-app-${env}`,
+    clientOptions: (env) => ({ enabled: true, region: env }),
+    nested: { url: (env) => `https://${env}.example.com` },
+    perEnv: { [DEFAULT]: (env) => env.length, prod: 1 },
+  })("dev");
+  expectTypeOf(cfg.get("serviceName")).toEqualTypeOf<string>();
+  expectTypeOf(cfg.get("clientOptions")).toEqualTypeOf<{ enabled: boolean; region: string }>();
+  expectTypeOf(cfg.get("nested.url")).toEqualTypeOf<string>();
+  expectTypeOf(cfg.get("perEnv")).toEqualTypeOf<number>();
+});
+
+test("per-env arrays with an empty override keep their element type", () => {
+  const cfg = makeConfig({
+    corsAllowedOrigins: { [DEFAULT]: ["http://localhost:3000"], prod: [] },
+    sesEmailIdentities: { [DEFAULT]: [], prod: ["noreply@example.com"] },
+    ports: { [DEFAULT]: [80], staging: [] },
+  })("dev");
+  // An empty override contributes `never[]`; the union stays usable as the element type.
+  const cors: string[] = cfg.get("corsAllowedOrigins");
+  const ses: string[] = cfg.get("sesEmailIdentities");
+  const ports: number[] = cfg.get("ports");
+  void [cors, ses, ports];
+  expectTypeOf(cfg.get("corsAllowedOrigins")).not.toBeNever();
+  expectTypeOf(cfg.get("sesEmailIdentities")).not.toBeNever();
+});
