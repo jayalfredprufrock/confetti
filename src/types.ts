@@ -48,6 +48,36 @@ export type ConfigValPerEnvTyped<T extends TypeTagOrLiterals> = {
   readonly [key: string]: ResolveTag<T> | ConfigValFn<ResolveTag<T>>;
 };
 
+/**
+ * The [TYPE] tag implied by a static `[DEFAULT]` when `[TYPE]` is omitted on an `[ENV]`/`[DATA]`
+ * leaf: `3000` → `"number"`, `["a"]` → `"string[]"`, etc. `never` when nothing can be inferred
+ * (strings, value functions, `null`, empty or mixed arrays) — those fall back to string semantics.
+ */
+export type InferTag<D> = D extends (...args: any[]) => any
+  ? never
+  : D extends number
+    ? "number"
+    : D extends boolean
+      ? "boolean"
+      : D extends readonly []
+        ? never
+        : D extends readonly string[]
+          ? "string[]"
+          : D extends readonly number[]
+            ? "number[]"
+            : D extends readonly boolean[]
+              ? "boolean[]"
+              : never;
+
+/** An `[ENV]`/`[DATA]` leaf whose type is inferred from its static `[DEFAULT]` (see {@link InferTag}). */
+export type ConfigValPerEnvInferred<T extends TypeTag> = {
+  readonly [TYPE]?: never;
+  readonly [DEFAULT]: TypeMap[T];
+  readonly [ENV]?: string;
+  readonly [DATA]?: any;
+  readonly [key: string]: TypeMap[T] | ConfigValFn<TypeMap[T]>;
+};
+
 export type ConfigValPerEnvFetcher = {
   readonly [TYPE]?: never;
   readonly [DEFAULT]?: string | ConfigValFn<string>;
@@ -93,9 +123,15 @@ export type ValidateConfig<C> = {
     : C[K] extends { [TYPE]: any }
       ? ConfigValPerEnvTyped<TypeTagOrLiterals>
       : C[K] extends { [ENV]: any } | { [DATA]: any }
-        ? ConfigValPerEnvFetcher
+        ? C[K] extends { [DEFAULT]: infer D }
+          ? [InferTag<D>] extends [never]
+            ? ConfigValPerEnvFetcher
+            : ConfigValPerEnvInferred<InferTag<D>>
+          : ConfigValPerEnvFetcher
         : C[K] extends { [DEFAULT]: any }
-          ? C[K]
+          ? C[K] extends { readonly [key: string]: ConfigVal | undefined }
+            ? C[K]
+            : ConfigValPerEnvPlain
           : C[K] extends Obj
             ? ValidateConfig<C[K]>
             : C[K];
@@ -146,7 +182,11 @@ type ResolveNode<T> = T extends Obj
     ? T extends { [TYPE]: infer Tag extends TypeTagOrLiterals }
       ? ResolveTag<Tag>
       : T extends { [ENV]: any } | { [DATA]: any }
-        ? string
+        ? T extends { [DEFAULT]: infer D }
+          ? [InferTag<D>] extends [never]
+            ? string
+            : TypeMap[InferTag<D>]
+          : string
         : T extends ConfigValPerEnvPlain<infer D>
           ? ResolvedValue<D>
           : never
@@ -229,4 +269,70 @@ export type ConfettiConfig<R> = {
     get(): R;
     resolve(fetcher: Fetcher): Promise<R>;
   };
+};
+
+/** A leaf value confetti can hold directly (anything else needs a value function). */
+export type LeafValue = Primitive | readonly Primitive[];
+
+/** [TYPE] values whose resolved type is assignable to `T`. */
+type TagsFor<T> =
+  | { [K in TypeTag]: TypeMap[K] extends T ? K : never }[TypeTag]
+  | ([Extract<T, Exclude<Primitive, null>>] extends [never]
+      ? never
+      : readonly Extract<T, Exclude<Primitive, null>>[]);
+
+/**
+ * Opt-in typing for one per-env leaf, for use with `satisfies` when a type already exists:
+ *
+ * ```ts
+ * port: { [ENV]: "PORT", [DEFAULT]: 3000, prod: 443 } satisfies PerEnv<number>,
+ * ```
+ *
+ * Gives completions and checks every env value, `[DEFAULT]` and `[TYPE]` against `T`. Type-only:
+ * the resolved type is still inferred from the literal. `T` must be a leaf type — objects belong
+ * in a nested section or a value function.
+ */
+export type PerEnv<T extends LeafValue> = {
+  readonly [TYPE]?: TagsFor<T>;
+  readonly [DEFAULT]?: T | ConfigValFn<T>;
+  readonly [ENV]?: string;
+  readonly [DATA]?: any;
+  readonly [key: string]: T | ConfigValFn<T> | undefined;
+};
+
+type IsPlainObj<T> = T extends readonly unknown[]
+  ? false
+  : T extends (...args: any[]) => any
+    ? false
+    : T extends object
+      ? true
+      : false;
+
+type LeafNodeOf<T extends LeafValue> = T | ConfigValFn<T> | PerEnv<T>;
+
+type ObjNodeOf<T> = T extends unknown
+  ? IsPlainObj<T> extends true
+    ? ConfigOf<T> | ConfigValFn<T>
+    : ConfigValFn<T>
+  : never;
+
+type ConfigNodeOf<T> =
+  | ([Extract<T, LeafValue>] extends [never] ? never : LeafNodeOf<Extract<T, LeafValue>>)
+  | ObjNodeOf<Exclude<T, LeafValue | undefined>>;
+
+/**
+ * The config input that resolves to `S`, for use with `satisfies` on a whole config or a section:
+ *
+ * ```ts
+ * makeConfig({ ... } satisfies ConfigOf<AppConfig>);
+ * makeConfig((env) => ({ ... }) satisfies ConfigOf<AppConfig>);
+ * makeConfig({ waf: { ... } satisfies ConfigOf<WafConfig> });
+ * ```
+ *
+ * Each key accepts a plain value, a value function, a per-env block ({@link PerEnv}), or — for
+ * object values — a nested section. Gives completions at every level and flags missing,
+ * misspelled and mistyped keys. Type-only: the resolved type is still inferred from the literal.
+ */
+export type ConfigOf<S> = {
+  readonly [K in keyof S]: ConfigNodeOf<S[K]>;
 };

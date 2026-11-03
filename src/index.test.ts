@@ -549,6 +549,20 @@ describe("makeConfig — invalid values throw at build time", () => {
     );
   });
 
+  test("invalid values inside a per-env block (objects, class instances, arrays of objects)", () => {
+    expect(build({ waf: { [DEFAULT]: false, prod: { challengePaths: ["/x"] } } })).toThrow(
+      /'waf' \(prod\) must be a primitive.*can't be objects/,
+    );
+    expect(build({ waf: { [DEFAULT]: { a: 1 } } })).toThrow(/'waf' \(\[DEFAULT\]\)/);
+    expect(build({ t: { [DEFAULT]: 1, prod: new Date() } })).toThrow(/'t' \(prod\)/);
+    expect(build({ h: { [DEFAULT]: [], prod: [{ a: 1 }] } })).toThrow(/'h' \(prod\)/);
+  });
+
+  test("undefined in a per-env block means 'not set' and falls back to [DEFAULT]", () => {
+    const cfg = makeConfig({ a: { [DEFAULT]: "d", prod: undefined } } as any)("prod");
+    expect(cfg.get("a")).toBe("d");
+  });
+
   test("valid leaves pass", () => {
     expect(
       build({
@@ -556,9 +570,58 @@ describe("makeConfig — invalid values throw at build time", () => {
         b: [1, "x", true],
         c: () => new Date(),
         d: { [TYPE]: ["x", 1], [DEFAULT]: "x" },
-        e: { [DEFAULT]: "x", prod: "y" },
+        e: { [DEFAULT]: "x", prod: "y", dev: () => ({ obj: true }) },
         f: Object.assign(Object.create(null), { g: 1 }),
       }),
     ).not.toThrow();
+  });
+});
+
+describe("[ENV]/[DATA] without [TYPE] — type inferred from [DEFAULT]", () => {
+  const VARS = ["INF_PORT", "INF_FLAG", "INF_LIST", "INF_NAME", "INF_FN", "INF_EMPTY"];
+  afterEach(() => VARS.forEach((v) => delete process.env[v]));
+
+  const config = makeConfig({
+    port: { [ENV]: "INF_PORT", [DEFAULT]: 3000 },
+    flag: { [ENV]: "INF_FLAG", [DATA]: "flags/x", [DEFAULT]: false },
+    list: { [ENV]: "INF_LIST", [DEFAULT]: [80] },
+    name: { [ENV]: "INF_NAME", [DEFAULT]: "svc" },
+    fn: { [ENV]: "INF_FN", [DEFAULT]: () => "fallback" },
+    plain: { [DEFAULT]: 1, prod: 2 },
+  });
+
+  test("env vars are coerced per the inferred type", () => {
+    process.env.INF_PORT = "8080";
+    process.env.INF_FLAG = "true";
+    process.env.INF_LIST = "[1,2]";
+    process.env.INF_NAME = "42";
+    const c = config("dev");
+    expect(c.get("port")).toBe(8080);
+    expect(c.get("flag")).toBe(true);
+    expect(c.get("list")).toEqual([1, 2]);
+    expect(c.get("name")).toBe("42");
+  });
+
+  test("bad env values throw like an explicit [TYPE]", () => {
+    process.env.INF_PORT = "abc";
+    expect(() => config("dev").get("port")).toThrow(/Cannot coerce 'abc' to number at 'port'/);
+  });
+
+  test("value-function defaults infer nothing (string semantics)", () => {
+    process.env.INF_FN = "123";
+    expect(config("dev").get("fn")).toBe("123");
+    expect([...config("dev").entries()].find(([p]) => p === "fn")![1].type).toBeUndefined();
+  });
+
+  test("fetcher returns are coerced and ctx/entries expose the inferred type", async () => {
+    const c = config("dev");
+    let seen: unknown;
+    const flag = await c.resolve("flag", async (ctx) => ((seen = ctx.type), "true"));
+    expect(flag).toBe(true);
+    expect(seen).toBe("boolean");
+    const types = Object.fromEntries([...c.entries()].map(([p, e]) => [p, e.type]));
+    expect(types).toMatchObject({ port: "number", flag: "boolean", list: "number[]" });
+    expect(types.name).toBeUndefined();
+    expect(types.plain).toBeUndefined();
   });
 });

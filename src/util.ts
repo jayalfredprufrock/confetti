@@ -138,6 +138,25 @@ const coerceFetched = (
   );
 };
 
+/**
+ * The [TYPE] tag implied by a static `[DEFAULT]` when `[TYPE]` is omitted (mirrors `InferTag`).
+ * Strings, functions, `null`, and empty or mixed arrays infer nothing (string semantics).
+ */
+const inferTag = (def: unknown): TypeTagOrLiterals | undefined => {
+  if (typeof def === "number") return "number";
+  if (typeof def === "boolean") return "boolean";
+  if (Array.isArray(def) && def.length > 0) {
+    const elem = typeof def[0];
+    if (
+      (elem === "string" || elem === "number" || elem === "boolean") &&
+      def.every((x) => typeof x === elem)
+    ) {
+      return `${elem}[]` as TypeTagOrLiterals;
+    }
+  }
+  return undefined;
+};
+
 export const buildEntry = (node: unknown, path: string, env: string): ConfigEntry => {
   if (!isConfigValPerEnv(node)) {
     return { path, value: node };
@@ -146,7 +165,8 @@ export const buildEntry = (node: unknown, path: string, env: string): ConfigEntr
   const envVar = node[ENV];
   const data = node[DATA];
   const defaultVal = node[DEFAULT];
-  const typeTag = node[TYPE];
+  const typeTag =
+    node[TYPE] ?? (envVar !== undefined || data !== undefined ? inferTag(defaultVal) : undefined);
   const entry: ConfigEntry = { path };
 
   if (envVar && process.env[envVar] !== undefined) {
@@ -195,6 +215,15 @@ export const assertValidConfig = (node: Obj, prefix = ""): void => {
         !(Array.isArray(tag) && tag.length > 0 && tag.every((m) => m !== null && isPrimitive(m)))
       ) {
         throw new Error(`Invalid [TYPE] ${JSON.stringify(tag)} at '${path}'.`);
+      }
+      // `undefined` is allowed here: it means "not set for this env" and falls back to [DEFAULT].
+      const values: [string, unknown][] = [["[DEFAULT]", val[DEFAULT]], ...Object.entries(val)];
+      for (const [k, v] of values) {
+        if (v !== undefined && !isValidLeaf(v)) {
+          throw new Error(
+            `Config value at '${path}' (${k}) must be a primitive, an array of primitives, or a function. Per-env values can't be objects; use a nested section, or wrap the value in a value function: (env) => value.`,
+          );
+        }
       }
     } else if (isNestedConfig(val)) {
       if (Object.getPrototypeOf(val) !== Object.prototype && Object.getPrototypeOf(val) !== null) {

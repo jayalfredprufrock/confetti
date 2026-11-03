@@ -1,7 +1,7 @@
 import { expectTypeOf, test } from "vite-plus/test";
 import { makeConfig } from "./make-config";
 import { DATA, DEFAULT, ENV, TYPE } from "./symbols";
-import type { ConfettiConfig, ConfigEntry } from "./types";
+import type { ConfettiConfig, ConfigEntry, ConfigOf, PerEnv } from "./types";
 
 const config = makeConfig({
   numberProp: 42,
@@ -159,9 +159,147 @@ test("unknown [TYPE] tag is rejected", () => {
   makeConfig({ a: { [TYPE]: "nope", [DEFAULT]: 1 } });
 });
 
-test("[ENV]/[DATA] without [TYPE] rejects non-string defaults", () => {
-  // @ts-expect-error — no [TYPE], so default must be string
-  makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000 } });
+test("[ENV]/[DATA] without [TYPE] infer the type from a static [DEFAULT]", () => {
+  const cfg = makeConfig({
+    port: { [ENV]: "PORT", [DEFAULT]: 3000, prod: 443 },
+    flag: { [DATA]: "flags/x", [DEFAULT]: false },
+    origins: { [ENV]: "ORIGINS", [DEFAULT]: ["http://localhost"] },
+    ports: { [ENV]: "PORTS", [DEFAULT]: [80] },
+    name: { [ENV]: "NAME", [DEFAULT]: "svc" },
+    noDefault: { [ENV]: "X" },
+  })("dev");
+  expectTypeOf(cfg.get("port")).toEqualTypeOf<number>();
+  expectTypeOf(cfg.get("flag")).toEqualTypeOf<boolean>();
+  expectTypeOf(cfg.get("origins")).toEqualTypeOf<string[]>();
+  expectTypeOf(cfg.get("ports")).toEqualTypeOf<number[]>();
+  expectTypeOf(cfg.get("name")).toEqualTypeOf<string>();
+  expectTypeOf(cfg.get("noDefault")).toEqualTypeOf<string>();
+});
+
+test("inferred [DEFAULT] type constrains per-env values", () => {
+  // @ts-expect-error — default infers number, so per-env values must be numbers
+  makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: 3000, prod: "443" } });
+});
+
+test("value-function [DEFAULT] on [ENV]/[DATA] still requires [TYPE] for non-strings", () => {
+  // @ts-expect-error — no inference from a function; without [TYPE] it must return a string
+  makeConfig({ port: { [ENV]: "PORT", [DEFAULT]: () => 3000 } });
+  makeConfig({ port: { [TYPE]: "number", [ENV]: "PORT", [DEFAULT]: () => 3000 } });
+  makeConfig({ name: { [ENV]: "NAME", [DEFAULT]: (env) => `svc-${env}` } });
+});
+
+test("empty-array [DEFAULT] on [ENV]/[DATA] still requires [TYPE]", () => {
+  // @ts-expect-error — [] has no element type to infer
+  makeConfig({ origins: { [ENV]: "ORIGINS", [DEFAULT]: [] } });
+  makeConfig({ origins: { [TYPE]: "string[]", [ENV]: "ORIGINS", [DEFAULT]: [] } });
+});
+
+test("object values in a per-env block are rejected", () => {
+  makeConfig({
+    // @ts-expect-error — per-env values can't be objects; use a section or a value function
+    waf: { [DEFAULT]: false, prod: { challengePaths: ["/x"] } },
+  });
+  const cfg = makeConfig({
+    waf: { [DEFAULT]: false, prod: () => ({ challengePaths: ["/x"] }) },
+  })("dev");
+  expectTypeOf(cfg.get("waf")).toEqualTypeOf<boolean | { challengePaths: string[] }>();
+});
+
+test("PerEnv<T> checks a single per-env leaf", () => {
+  const cfg = makeConfig({
+    port: { [ENV]: "PORT", [DEFAULT]: 3000, prod: 443 } satisfies PerEnv<number>,
+    level: { [TYPE]: ["debug", "info"], [DEFAULT]: "info" } satisfies PerEnv<"debug" | "info">,
+    url: {
+      [DEFAULT]: "http://localhost",
+      prod: (env) => `https://${env}.x`,
+    } satisfies PerEnv<string>,
+  })("dev");
+  expectTypeOf(cfg.get("port")).toEqualTypeOf<number>();
+  expectTypeOf(cfg.get("level")).toEqualTypeOf<"debug" | "info">();
+
+  // @ts-expect-error — env value must match T
+  void ({ [DEFAULT]: 3000, prod: "443" } satisfies PerEnv<number>);
+  // @ts-expect-error — [TYPE] must resolve to T
+  void ({ [TYPE]: "string", [DEFAULT]: 3000 } satisfies PerEnv<number>);
+  // @ts-expect-error — tuple members must be assignable to T
+  void ({ [TYPE]: ["debug", "nope"] } satisfies PerEnv<"debug" | "info">);
+});
+
+interface WafShape {
+  enabled: boolean;
+  challengePaths?: string[];
+  ipRateLimit: number;
+}
+interface AppShape {
+  stackId: string;
+  port: number;
+  level: "debug" | "info";
+  waf: WafShape;
+  client: { region: string; retries: number };
+}
+
+test("ConfigOf<S> checks a whole config and keeps inference", () => {
+  const cfg = makeConfig({
+    stackId: "playground",
+    port: { [TYPE]: "number", [ENV]: "PORT", [DEFAULT]: 3000 },
+    level: { [TYPE]: ["debug", "info"], [ENV]: "LOG_LEVEL", [DEFAULT]: "info" },
+    waf: {
+      enabled: { [DEFAULT]: true, dev: false },
+      ipRateLimit: { [ENV]: "WAF_LIMIT", [DEFAULT]: 2000, prod: 500 },
+    },
+    client: (env) => ({ region: env, retries: 3 }),
+  } satisfies ConfigOf<AppShape>);
+  const c = cfg("dev");
+  expectTypeOf(c.get("waf.enabled")).toEqualTypeOf<boolean>();
+  expectTypeOf(c.get("waf.ipRateLimit")).toEqualTypeOf<number>();
+  expectTypeOf(c.get("level")).toEqualTypeOf<"debug" | "info">();
+  const _view: ConfettiConfig<AppShape> = cfg;
+  void _view;
+});
+
+test("ConfigOf<S> works on the factory form and on a single section", () => {
+  makeConfig(
+    (env) =>
+      ({
+        stackId: `app-${env}`,
+        port: 3000,
+        level: "info",
+        waf: { enabled: true, ipRateLimit: 100 },
+        client: { region: "us-east-1", retries: 3 },
+      }) satisfies ConfigOf<AppShape>,
+  );
+  makeConfig({
+    other: 1,
+    waf: { enabled: true, ipRateLimit: 100 } satisfies ConfigOf<WafShape>,
+  });
+});
+
+test("ConfigOf<S> flags missing, extra, misspelled and mistyped keys", () => {
+  makeConfig({
+    waf: {
+      enabled: true,
+      // @ts-expect-error — misspelled key
+      ipRateLimt: 100,
+    } satisfies ConfigOf<WafShape>,
+  });
+  makeConfig({
+    // @ts-expect-error — `ipRateLimit` missing
+    waf: { enabled: true } satisfies ConfigOf<WafShape>,
+  });
+  makeConfig({
+    waf: {
+      enabled: true,
+      // @ts-expect-error — wrong type
+      ipRateLimit: "100",
+    } satisfies ConfigOf<WafShape>,
+  });
+  makeConfig({
+    waf: {
+      // @ts-expect-error — wrong type inside a per-env block
+      enabled: { [DEFAULT]: true, dev: "no" },
+      ipRateLimit: 100,
+    } satisfies ConfigOf<WafShape>,
+  });
 });
 
 type CoreConfig = { appName: string; port: number };

@@ -105,7 +105,7 @@ The factory form remains the right tool when you genuinely need `env` to shape _
 
 ### Valid leaf values
 
-A plain leaf must be a primitive (`string`, `number`, `boolean`, `null`), an array of primitives, or a value function. Anything else (`undefined`, class instances like `Date`, arrays of objects, symbols, bigints) or an unknown `[TYPE]` tag throws a path-specific error when the config is built for an environment (`config(env)`), before any value is read. Each leaf type is not checked at compile time, because doing so is very expensive for TypeScript on large configs.
+A plain leaf must be a primitive (`string`, `number`, `boolean`, `null`), an array of primitives, or a value function. The same applies to every value in a per-env block (`[DEFAULT]` and each env key). **Per-env values can't be objects.** For shared settings with per-env tweaks, use a nested section with per-env leaves (e.g. `waf: { enabled: { [DEFAULT]: true, dev: false }, ... }`). For a genuinely opaque per-env object, use a value function (`prod: () => ({ ... })`). An `undefined` per-env value means "not set for this env" and falls back to `[DEFAULT]`. Anything else (`undefined`, class instances like `Date`, arrays of objects, symbols, bigints) or an unknown `[TYPE]` tag throws a path-specific error when the config is built for an environment (`config(env)`), before any value is read. Each leaf type is not checked at compile time, because doing so is very expensive for TypeScript on large configs.
 
 A common case is reading `process.env.X` directly into a leaf, which is `undefined` whenever the variable is unset. Use `{ [ENV]: "X" }` instead: it adds precedence and `[TYPE]` coercion, and `entries()` can see the dependency.
 
@@ -160,7 +160,15 @@ Supported tags: `"string" | "number" | "boolean" | "string[]" | "number[]" | "bo
 
 `[TYPE]` also constrains `[DEFAULT]` and per-env values at compile time — `{ [TYPE]: "number", [DEFAULT]: "nope" }` is a type error.
 
-**When `[ENV]` or `[DATA]` are present without `[TYPE]`:** values are required to be strings (both `[DEFAULT]` and per-env overrides). The fetcher must also return a string. If you need a non-string here, add `[TYPE]`.
+**When `[ENV]` or `[DATA]` are present without `[TYPE]`, the type is inferred from a static `[DEFAULT]`:**
+
+```ts
+port: { [ENV]: "PORT", [DEFAULT]: 3000 },            // number, env var coerced like [TYPE]: "number"
+debug: { [ENV]: "DEBUG", [DEFAULT]: false },         // boolean
+origins: { [ENV]: "ORIGINS", [DEFAULT]: ["http://localhost"] }, // string[]
+```
+
+Per-env values must then match that type, env vars and fetcher returns are coerced exactly as if you'd written the `[TYPE]`, and `entries()` / the fetcher context report it as `type`. Nothing is inferred from a string default, a missing default, an empty array (`[]`), or a **value-function default**. Those use string semantics: values must be strings and the fetcher must return a string. Add an explicit `[TYPE]` for a non-string in those cases, or for a literal union.
 
 #### Literal unions with a tuple `[TYPE]`
 
@@ -260,6 +268,39 @@ function forRootAsync(opts: { config: ConfettiConfig<CoreConfig> }) {
 `ConfettiConfig<R>` intentionally exposes only the pathless `get()`/`resolve(fetcher)` — the output-position members — which is what makes it covariant in `R`. `Confetti<C>` (what `makeConfig` returns) is assignable to `ConfettiConfig<ResolvedConfig<C>>`, so you just pass it through. If a consumer needs typed **path** access (`get("a.b")`, `entries`), have them take the full `Confetti<C>` instead; it's invariant in `C`, so it can't be widened to a base shape this way.
 
 To name the resolved shape of a specific config value, use `GetConfig<typeof config>`.
+
+### Enforcing a config shape with `ConfigOf` and `PerEnv`
+
+Configs are loosely typed by default: the config file is the source of truth, and a mistake shows up where the value is used. When a type already exists, such as a library's config interface or a props type for one section, you can check the config against it with `satisfies`. You also get editor completions while writing it:
+
+```ts
+import { makeConfig, DEFAULT, ENV, type ConfigOf, type PerEnv } from "@jayalfredprufrock/confetti";
+
+interface WafConfig { enabled: boolean; challengePaths?: string[]; ipRateLimit: number }
+
+const config = makeConfig({
+  appName: "my-app",
+
+  // one section
+  waf: {
+    enabled: { [DEFAULT]: true, dev: false },
+    ipRateLimit: { [ENV]: "WAF_LIMIT", [DEFAULT]: 2000, prod: 500 },
+  } satisfies ConfigOf<WafConfig>,
+
+  // one leaf
+  port: { [ENV]: "PORT", [DEFAULT]: 3000, prod: 443 } satisfies PerEnv<number>,
+});
+
+// or the whole config (works with the factory form too)
+makeConfig({ ... } satisfies ConfigOf<AppConfig>);
+makeConfig((env) => ({ ... }) satisfies ConfigOf<AppConfig>);
+```
+
+- **`ConfigOf<S>`** accepts the input that resolves to `S`. Each key can be a plain value, a value function, a per-env block, or (for object values) a nested section. It flags missing, misspelled and mistyped keys on the offending line.
+- **`PerEnv<T>`** checks a single per-env leaf: every env value, `[DEFAULT]` and `[TYPE]` must fit `T`.
+- Both are **type-only**. `satisfies` checks but doesn't change the inferred type, so typed paths (`get("waf.enabled")`) keep working. Put `satisfies` on the object passed _into_ `makeConfig`. On the result (`makeConfig(...) satisfies ...`) you still get a mismatch error via `ConfettiConfig`, but no completions and no error on the offending line.
+- A plain literal widens (`level: "info"` resolves to `string`), so `ConfigOf<{ level: "debug" | "info" }>` accepts it but the resolved type is `string`. Use a tuple `[TYPE]` to keep the union.
+- `ConfigOf` covers every key of `S`, so use it where a type exists independently. Writing an interface just to mirror your config means maintaining its type in two places.
 
 ## Real-world use cases
 
